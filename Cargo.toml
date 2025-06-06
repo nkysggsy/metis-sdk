@@ -63,6 +63,7 @@ revm = { version = "24.0.1", default-features = false, features = [
 ] }
 
 # OP Alloy and OP Revm dependencies
+alloy-op-evm = { version = "0.10.0" }
 op-alloy-consensus = { version = "0.17.2" }
 op-alloy-network = { version = "0.17.2" }
 op-alloy-rpc-types = { version = "0.17.2" }

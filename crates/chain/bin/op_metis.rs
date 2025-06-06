@@ -1,6 +1,8 @@
 #![allow(missing_docs)]
 
 use clap::Parser;
+use metis_chain::op_provider::OpParallelExecutorBuilder;
+use reth::builder::Node;
 use reth_optimism_cli::{Cli, chainspec::OpChainSpecParser};
 use reth_optimism_node::{OpNode, args::RollupArgs};
 use tracing::info;
@@ -21,8 +23,11 @@ fn main() {
     if let Err(err) =
         Cli::<OpChainSpecParser, RollupArgs>::parse().run(async move |builder, rollup_args| {
             info!(target: "reth::cli", "Launching node");
-            let handle = builder.node(OpNode::new(rollup_args));
-            // TODO add exex and parallel executor
+            let handle = builder.node(
+                OpNode::new(rollup_args)
+                    .components_builder()
+                    .executor(OpParallelExecutorBuilder::default()),
+            );
             handle.launch().await?.wait_for_node_exit().await
         })
     {
