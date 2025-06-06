@@ -1,21 +1,18 @@
 use alloy_consensus::{Block, Header};
-use alloy_evm::EvmFactory;
-use alloy_evm::op_revm::{OpSpecId, OpTransaction};
 use alloy_evm::{
-    Database, Evm, EvmEnv,
+    Database, Evm, EvmEnv, EvmFactory,
     block::{
         BlockExecutionError, BlockExecutionResult, BlockExecutor, BlockExecutorFactory,
         BlockExecutorFor, CommitChanges, ExecutableTx, OnStateHook,
     },
+    op_revm::{OpSpecId, OpTransaction},
     precompiles::PrecompilesMap,
 };
 use alloy_op_evm::{OpBlockExecutionCtx, OpBlockExecutor, OpEvm, OpEvmFactory};
 use metis_primitives::ExecutionResult;
 use reth::api::NodeTypes;
-use reth::builder::BuilderContext;
-use reth::builder::components::ExecutorBuilder;
-use reth::revm::Inspector;
-use reth::revm::context::TxEnv;
+use reth::builder::{BuilderContext, components::ExecutorBuilder};
+use reth::revm::{Inspector, context::TxEnv};
 use reth_evm::ConfigureEvm;
 use reth_node_api::FullNodeTypes;
 use reth_optimism_chainspec::OpChainSpec;
@@ -24,6 +21,7 @@ use reth_optimism_primitives::{OpPrimitives, OpReceipt, OpTransactionSigned};
 use reth_primitives::SealedBlock;
 use reth_primitives_traits::SealedHeader;
 use revm::database::State;
+
 use std::fmt::Debug;
 use std::sync::Arc;
 
@@ -165,6 +163,31 @@ where
     fn evm(&self) -> &Self::Evm {
         self.inner.evm()
     }
+
+    /// Executes all transactions in a block, applying pre and post execution changes.
+    fn execute_block(
+        mut self,
+        transactions: impl IntoIterator<Item = impl ExecutableTx<Self>>,
+    ) -> Result<BlockExecutionResult<Self::Receipt>, BlockExecutionError>
+    where
+        Self: Sized,
+    {
+        self.apply_pre_execution_changes()?;
+        self.execute_transactions(transactions)
+    }
+}
+
+impl<'db, DB, E> OpParallelBlockExecutor<E>
+where
+    DB: Database + 'db,
+    E: Evm<DB = &'db mut State<DB>, Tx = OpTransaction<TxEnv>>,
+{
+    pub fn execute_transactions(
+        &mut self,
+        _transactions: impl IntoIterator<Item = impl ExecutableTx<Self>>,
+    ) -> Result<BlockExecutionResult<OpReceipt>, BlockExecutionError> {
+        todo!()
+    }
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -175,9 +198,9 @@ impl<Node> ExecutorBuilder<Node> for OpParallelExecutorBuilder
 where
     Node: FullNodeTypes<Types: NodeTypes<ChainSpec = OpChainSpec, Primitives = OpPrimitives>>,
 {
-    type EVM = Arc<OpEvmConfig>;
+    type EVM = OpParallelEvmConfig;
 
     async fn build_evm(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::EVM> {
-        Ok(Arc::new(OpEvmConfig::optimism(ctx.chain_spec())))
+        Ok(OpParallelEvmConfig::new(ctx.chain_spec()))
     }
 }
