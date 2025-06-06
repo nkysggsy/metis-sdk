@@ -1,52 +1,114 @@
-use std::sync::Arc;
 use reth::api::NodeTypes;
 use reth::builder::BuilderContext;
 use reth::builder::components::ExecutorBuilder;
+use reth_evm::block::{BlockExecutor, BlockExecutorFactory};
+use reth_evm::eth::EthBlockExecutor;
+use reth_evm::{ConfigureEvm, execute::BlockExecutor as RethBlockExecutor, InspectorFor};
+use reth_evm::{Evm, EvmEnv};
+use reth_evm_ethereum::RethReceiptBuilder;
 use reth_node_api::FullNodeTypes;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_evm::{OpEvmConfig, OpRethReceiptBuilder};
-use reth_optimism_primitives::OpPrimitives;
-use alloy_op_evm::OpBlockExecutor;
-use alloy_evm::Database;
-use alloy_evm::block::{BlockExecutionError, BlockExecutionResult, CommitChanges};
-use alloy_evm::eth::dao_fork::DAO_HARDFORK_BENEFICIARY;
-use alloy_evm::eth::{dao_fork, eip6110};
-use alloy_hardforks::EthereumHardfork;
-use metis_primitives::{CfgEnv, ExecutionResult, SpecId, TxEnv};
-use reth::providers::BlockExecutionResult as RethBlockExecutionResult;
-use reth_evm::block::{BlockExecutor, BlockExecutorFactory, BlockExecutorFor, ExecutableTx};
-use reth_evm::eth::spec::EthExecutorSpec;
-use reth_evm::eth::{EthBlockExecutionCtx, EthBlockExecutor};
-use reth_evm::{ConfigureEvm, OnStateHook, execute::BlockExecutor as RethBlockExecutor};
-use reth_evm::{Evm, EvmEnv, EvmFactory, EvmFor, InspectorFor};
-use reth_evm_ethereum::EthEvmConfig;
-use reth_evm_ethereum::{EthBlockAssembler, RethReceiptBuilder};
-use reth_primitives_traits::{SealedBlock, SealedHeader};
-use revm::DatabaseCommit;
-use std::convert::Infallible;
+use reth_optimism_primitives::{OpPrimitives, OpReceipt, OpTransactionSigned};
 use std::fmt::Debug;
-use std::num::NonZeroUsize;
 use std::sync::Arc;
-use metis_pe::ParallelExecutor;
-use crate::state::StateStorageAdapter;
+use alloy_evm::op_revm::OpSpecId;
+use alloy_consensus::{Block, Header};
+use alloy_evm::block::BlockExecutorFor;
+use alloy_op_evm::{OpBlockExecutionCtx, OpBlockExecutor, OpEvm, OpEvmFactory};
+use reth_primitives::SealedBlock;
+use reth_primitives_traits::SealedHeader;
+use revm::Database;
+use revm::database::State;
 
 /// Ethereum-related EVM configuration with the parallel executor.
 #[derive(Debug, Clone)]
 pub struct OpParallelEvmConfig {
-    pub config: OpEvmConfig,
+    pub inner: OpEvmConfig,
 }
 
 impl OpParallelEvmConfig {
     pub fn new(chain_spec: Arc<OpChainSpec>) -> Self {
         Self {
-            config: OpEvmConfig::optimism(chain_spec),
+            inner: OpEvmConfig::optimism(chain_spec),
         }
     }
 }
 
-#[derive(Debug, Default, Clone, Copy)]
-#[non_exhaustive]
-pub struct OpParallelExecutorBuilder;
+impl ConfigureEvm for OpParallelEvmConfig {
+    type Primitives = OpPrimitives;
+    type Error = <OpEvmConfig as ConfigureEvm>::Error;
+    type NextBlockEnvCtx = <OpEvmConfig as ConfigureEvm>::NextBlockEnvCtx;
+    type BlockExecutorFactory = Self;
+    type BlockAssembler = <OpEvmConfig as ConfigureEvm>::BlockAssembler;
+
+    fn block_executor_factory(&self) -> &Self::BlockExecutorFactory {
+       self
+    }
+
+    fn block_assembler(&self) -> &Self::BlockAssembler {
+        self.inner.block_assembler()
+    }
+
+    fn evm_env(&self, header: &Header) -> EvmEnv<OpSpecId> {
+        self.inner.evm_env(header)
+    }
+
+    fn next_evm_env(
+        &self,
+        parent: &Header,
+        attributes: &Self::NextBlockEnvCtx,
+    ) -> Result<EvmEnv<OpSpecId>, Self::Error> {
+        self.inner.next_evm_env(parent, attributes)
+    }
+
+    fn context_for_block(
+        &self,
+        block: &SealedBlock<Block<OpTransactionSigned>>,
+    ) -> OpBlockExecutionCtx {
+        self.inner.context_for_block(block)
+    }
+
+    fn context_for_next_block(
+        &self,
+        parent: &SealedHeader,
+        attributes: Self::NextBlockEnvCtx,
+    ) -> OpBlockExecutionCtx {
+        self.inner.context_for_next_block(parent, attributes)
+    }
+}
+
+impl BlockExecutorFactory for OpParallelEvmConfig {
+    type EvmFactory = OpEvmFactory;
+    type ExecutionCtx<'a> = OpBlockExecutionCtx;
+    type Transaction = OpTransactionSigned;
+    type Receipt = OpReceipt;
+
+    fn evm_factory(&self) -> &Self::EvmFactory {
+        self.inner.evm_factory()
+    }
+
+    fn create_executor<'a, DB, I>(
+        &'a self,
+        evm: OpEvm<&'a mut State<DB>, I>,
+        ctx: OpBlockExecutionCtx,
+    ) -> impl BlockExecutorFor<'a, Self, DB, I>
+    where
+        DB: Database + 'a,
+        I: InspectorFor<Self, &'a mut State<DB>> + 'a,
+    {
+        OPParallelBlockExecutor {
+            executor: OpBlockExecutor::new(
+                evm,
+                ctx,
+                self.inner.chain_spec().clone(),
+                *self.inner.executor_factory.receipt_builder(),
+            ),
+        }
+    }
+}
+
+
 
 impl<Node> ExecutorBuilder<Node> for OpParallelExecutorBuilder
 where
@@ -58,4 +120,13 @@ where
         Ok(Arc::new(OpEvmConfig::optimism(ctx.chain_spec())))
     }
 }
+
+/// Parallel block executor for Optimism.
+pub struct OPParallelBlockExecutor<Evm> {
+    /// Eth original executor.
+    executor: OpBlockExecutor<Evm, OpRethReceiptBuilder, Arc<OpChainSpec>>,
+}
+
+
+
 //  /Users/ysg/Github/reth/examples/custom-node/src/evm.rs
