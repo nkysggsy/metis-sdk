@@ -218,16 +218,6 @@ pub struct OpParallelNode {
     op_node: OpNode,
 }
 
-/// A [`ComponentsBuilder`] with its generic arguments set to a stack of Optimism Parallel specific builders.
-pub type OpParallelNodeComponentBuilder<Node, Payload = OpPayloadBuilder> = ComponentsBuilder<
-    Node,
-    OpPoolBuilder,
-    BasicPayloadServiceBuilder<Payload>,
-    OpNetworkBuilder,
-    OpParallelExecutorBuilder,
-    OpConsensusBuilder,
->;
-
 impl OpParallelNode {
     pub fn new(op_node: OpNode) -> Self {
         Self { op_node }
