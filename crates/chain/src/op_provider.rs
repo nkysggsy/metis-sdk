@@ -48,6 +48,36 @@ impl OpParallelEvmConfig {
     }
 }
 
+impl BlockExecutorFactory for OpParallelEvmConfig {
+    type EvmFactory = OpEvmFactory;
+    type ExecutionCtx<'a> = OpBlockExecutionCtx;
+    type Transaction = OpTransactionSigned;
+    type Receipt = OpReceipt;
+
+    fn evm_factory(&self) -> &Self::EvmFactory {
+        self.config.evm_factory()
+    }
+
+    fn create_executor<'a, DB, I>(
+        &'a self,
+        evm: OpEvm<&'a mut State<DB>, I, PrecompilesMap>,
+        ctx: Self::ExecutionCtx<'a>,
+    ) -> impl BlockExecutorFor<'a, Self, DB, I>
+    where
+        DB: Database + 'a,
+        I: Inspector<<Self::EvmFactory as EvmFactory>::Context<&'a mut State<DB>>> + 'a,
+    {
+        OpParallelBlockExecutor {
+            inner: OpBlockExecutor::new(
+                evm,
+                ctx,
+                self.config.chain_spec().clone(),
+                *self.config.executor_factory.receipt_builder(),
+            ),
+        }
+    }
+}
+
 impl ConfigureEvm for OpParallelEvmConfig {
     type Primitives = OpPrimitives;
     type Error = <OpEvmConfig as ConfigureEvm>::Error;
@@ -88,36 +118,6 @@ impl ConfigureEvm for OpParallelEvmConfig {
         attributes: Self::NextBlockEnvCtx,
     ) -> OpBlockExecutionCtx {
         self.config.context_for_next_block(parent, attributes)
-    }
-}
-
-impl BlockExecutorFactory for OpParallelEvmConfig {
-    type EvmFactory = OpEvmFactory;
-    type ExecutionCtx<'a> = OpBlockExecutionCtx;
-    type Transaction = OpTransactionSigned;
-    type Receipt = OpReceipt;
-
-    fn evm_factory(&self) -> &Self::EvmFactory {
-        self.config.evm_factory()
-    }
-
-    fn create_executor<'a, DB, I>(
-        &'a self,
-        evm: OpEvm<&'a mut State<DB>, I, PrecompilesMap>,
-        ctx: Self::ExecutionCtx<'a>,
-    ) -> impl BlockExecutorFor<'a, Self, DB, I>
-    where
-        DB: Database + 'a,
-        I: Inspector<<Self::EvmFactory as EvmFactory>::Context<&'a mut State<DB>>> + 'a,
-    {
-        OpParallelBlockExecutor {
-            inner: OpBlockExecutor::new(
-                evm,
-                ctx,
-                self.config.chain_spec().clone(),
-                *self.config.executor_factory.receipt_builder(),
-            ),
-        }
     }
 }
 
