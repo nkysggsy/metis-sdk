@@ -11,7 +11,9 @@ use alloy_evm::{
 use alloy_op_evm::{OpBlockExecutionCtx, OpBlockExecutor, OpEvm, OpEvmFactory};
 use metis_primitives::ExecutionResult;
 use reth::api::NodeTypes;
-use reth::builder::{BuilderContext, components::ExecutorBuilder};
+use reth::builder::{
+    BuilderContext, Node, NodeAdapter, NodeComponentsBuilder, components::ExecutorBuilder,
+};
 use reth::revm::{Inspector, context::TxEnv};
 use reth_evm::ConfigureEvm;
 use reth_node_api::FullNodeTypes;
@@ -22,6 +24,13 @@ use reth_primitives::SealedBlock;
 use reth_primitives_traits::SealedHeader;
 use revm::database::State;
 
+use reth::builder::components::{BasicPayloadServiceBuilder, ComponentsBuilder};
+use reth_optimism_node::node::{
+    OpAddOns, OpConsensusBuilder, OpEngineValidatorBuilder, OpNetworkBuilder, OpPayloadBuilder,
+    OpPoolBuilder,
+};
+use reth_optimism_node::{OpEngineApiBuilder, OpNode};
+use reth_optimism_rpc::eth::OpEthApiBuilder;
 use std::fmt::Debug;
 use std::sync::Arc;
 
@@ -164,7 +173,6 @@ where
         self.inner.evm()
     }
 
-    /// Executes all transactions in a block, applying pre and post execution changes.
     fn execute_block(
         mut self,
         transactions: impl IntoIterator<Item = impl ExecutableTx<Self>>,
@@ -202,5 +210,78 @@ where
 
     async fn build_evm(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::EVM> {
         Ok(OpParallelEvmConfig::new(ctx.chain_spec()))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct OpParallelNode {
+    op_node: OpNode,
+}
+
+/// A [`ComponentsBuilder`] with its generic arguments set to a stack of Optimism Parallel specific builders.
+pub type OpParallelNodeComponentBuilder<Node, Payload = OpPayloadBuilder> = ComponentsBuilder<
+    Node,
+    OpPoolBuilder,
+    BasicPayloadServiceBuilder<Payload>,
+    OpNetworkBuilder,
+    OpParallelExecutorBuilder,
+    OpConsensusBuilder,
+>;
+
+impl OpParallelNode {
+    pub fn new(op_node: OpNode) -> Self {
+        Self { op_node }
+    }
+}
+
+impl NodeTypes for OpParallelNode {
+    type Primitives = <OpNode as NodeTypes>::Primitives;
+    type ChainSpec = <OpNode as NodeTypes>::ChainSpec;
+    type StateCommitment = <OpNode as NodeTypes>::StateCommitment;
+    type Storage = <OpNode as NodeTypes>::Storage;
+    type Payload = <OpNode as NodeTypes>::Payload;
+}
+
+impl<N> Node<N> for OpParallelNode
+where
+    N: FullNodeTypes<Types = Self>,
+{
+    type ComponentsBuilder = ComponentsBuilder<
+        N,
+        OpPoolBuilder,
+        BasicPayloadServiceBuilder<OpPayloadBuilder>,
+        OpNetworkBuilder,
+        OpParallelExecutorBuilder,
+        OpConsensusBuilder,
+    >;
+
+    type AddOns = OpAddOns<
+        NodeAdapter<N, <Self::ComponentsBuilder as NodeComponentsBuilder<N>>::Components>,
+        OpEthApiBuilder,
+        OpEngineValidatorBuilder,
+        OpEngineApiBuilder<OpEngineValidatorBuilder>,
+    >;
+
+    fn components_builder(&self) -> Self::ComponentsBuilder {
+        ComponentsBuilder::default()
+            .node_types::<N>()
+            // XXX FIXME
+            .pool(OpPoolBuilder::default())
+            .executor(OpParallelExecutorBuilder::default())
+            .payload(BasicPayloadServiceBuilder::new(OpPayloadBuilder::new(
+                false,
+            )))
+            .network(OpNetworkBuilder::new(false, false))
+            .consensus(OpConsensusBuilder::default())
+    }
+
+    fn add_ons(&self) -> Self::AddOns {
+        Self::AddOns::builder()
+            .with_sequencer(self.op_node.args.sequencer.clone())
+            .with_sequencer_headers(self.op_node.args.sequencer_headers.clone())
+            .with_da_config(self.op_node.da_config.clone())
+            .with_enable_tx_conditional(self.op_node.args.enable_tx_conditional)
+            .with_min_suggested_priority_fee(self.op_node.args.min_suggested_priority_fee)
+            .build()
     }
 }
