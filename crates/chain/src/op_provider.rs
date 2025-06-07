@@ -26,13 +26,14 @@ use revm::database::State;
 
 use reth::builder::components::{BasicPayloadServiceBuilder, ComponentsBuilder};
 use reth_optimism_node::node::{
-    OpAddOns, OpConsensusBuilder, OpEngineValidatorBuilder, OpNetworkBuilder, OpPayloadBuilder,
-    OpPoolBuilder,
+    OpAddOns, OpConsensusBuilder, OpEngineValidatorBuilder, OpNetworkBuilder, OpNodeTypes,
+    OpPayloadBuilder, OpPoolBuilder,
 };
 use reth_optimism_node::{OpEngineApiBuilder, OpNode};
 use reth_optimism_rpc::eth::OpEthApiBuilder;
 use std::fmt::Debug;
 use std::sync::Arc;
+use reth_optimism_node::args::RollupArgs;
 
 /// Optimism-related EVM configuration with the parallel executor.
 #[derive(Debug, Clone)]
@@ -217,10 +218,42 @@ where
 pub struct OpParallelNode {
     op_node: OpNode,
 }
+pub type OpNodeComponentBuilder<Node, Payload = OpPayloadBuilder> = ComponentsBuilder<
+    Node,
+    OpPoolBuilder,
+    BasicPayloadServiceBuilder<Payload>,
+    OpNetworkBuilder,
+    OpParallelExecutorBuilder,
+    OpConsensusBuilder,
+>;
 
 impl OpParallelNode {
     pub fn new(op_node: OpNode) -> Self {
         Self { op_node }
+    }
+
+    pub fn components<Node>(&self) -> OpNodeComponentBuilder<Node>
+    where
+        Node: FullNodeTypes<Types: OpNodeTypes + NodeTypes<ChainSpec = OpChainSpec, Primitives = OpPrimitives>>,
+    {
+        let RollupArgs { disable_txpool_gossip, compute_pending_block, discovery_v4, .. } =
+            self.op_node.args;
+        ComponentsBuilder::default()
+            .node_types::<Node>()
+            .pool(
+                OpPoolBuilder::default()
+                    .with_enable_tx_conditional(self.op_node.args.enable_tx_conditional)
+                    .with_supervisor(
+                        self.op_node.args.supervisor_http.clone(),
+                        self.op_node.args.supervisor_safety_level,
+                    ),
+            )
+            .executor(OpParallelExecutorBuilder::default())
+            .payload(BasicPayloadServiceBuilder::new(
+                OpPayloadBuilder::new(compute_pending_block).with_da_config(self.op_node.da_config.clone()),
+            ))
+            .network(OpNetworkBuilder::new(disable_txpool_gossip, !discovery_v4))
+            .consensus(OpConsensusBuilder::default())
     }
 }
 
@@ -251,8 +284,9 @@ where
         OpEngineValidatorBuilder,
         OpEngineApiBuilder<OpEngineValidatorBuilder>,
     >;
+    /*
 
-    fn components_builder(&self) -> Self::ComponentsBuilder {
+    fn components_builder2(&self) -> Self::ComponentsBuilder {
         ComponentsBuilder::default()
             .node_types::<N>()
             // XXX FIXME
@@ -263,6 +297,10 @@ where
             )))
             .network(OpNetworkBuilder::new(false, false))
             .consensus(OpConsensusBuilder::default())
+    } */
+
+    fn components_builder(&self) -> Self::ComponentsBuilder {
+        self.components::<N>()
     }
 
     fn add_ons(&self) -> Self::AddOns {
