@@ -25,6 +25,7 @@ use reth_primitives_traits::SealedHeader;
 use revm::database::State;
 
 use reth::builder::components::{BasicPayloadServiceBuilder, ComponentsBuilder};
+use reth_optimism_forks::OpHardforks;
 use reth_optimism_node::node::{
     OpAddOns, OpConsensusBuilder, OpEngineValidatorBuilder, OpNetworkBuilder, OpPayloadBuilder,
     OpPoolBuilder,
@@ -68,6 +69,7 @@ impl BlockExecutorFactory for OpParallelEvmConfig {
         I: Inspector<<Self::EvmFactory as EvmFactory>::Context<&'a mut State<DB>>> + 'a,
     {
         OpParallelBlockExecutor {
+            spec: self.config.chain_spec().clone(),
             inner: OpBlockExecutor::new(
                 evm,
                 ctx,
@@ -122,14 +124,16 @@ impl ConfigureEvm for OpParallelEvmConfig {
 }
 
 /// Parallel block executor for Optimism.
-pub struct OpParallelBlockExecutor<Evm> {
-    inner: OpBlockExecutor<Evm, OpRethReceiptBuilder, Arc<OpChainSpec>>,
+pub struct OpParallelBlockExecutor<Evm, Spec> {
+    spec: Spec,
+    inner: OpBlockExecutor<Evm, OpRethReceiptBuilder, Spec>,
 }
 
-impl<'db, DB, E> BlockExecutor for OpParallelBlockExecutor<E>
+impl<'db, DB, E, Spec> BlockExecutor for OpParallelBlockExecutor<E, Spec>
 where
     DB: Database + 'db,
     E: Evm<DB = &'db mut State<DB>, Tx = OpTransaction<TxEnv>>,
+    Spec: OpHardforks,
 {
     type Transaction = OpTransactionSigned;
     type Receipt = OpReceipt;
@@ -185,16 +189,50 @@ where
     }
 }
 
-impl<'db, DB, E> OpParallelBlockExecutor<E>
+impl<'db, DB, E, Spec> OpParallelBlockExecutor<E, Spec>
 where
     DB: Database + 'db,
     E: Evm<DB = &'db mut State<DB>, Tx = OpTransaction<TxEnv>>,
+    Spec: OpHardforks,
 {
     pub fn execute_transactions(
         &mut self,
         _transactions: impl IntoIterator<Item = impl ExecutableTx<Self>>,
     ) -> Result<BlockExecutionResult<OpReceipt>, BlockExecutionError> {
         // TODO Execute block transactions parallel use metis_pe::ParallelExecutor
+        todo!()
+        /*
+        // Execute block transactions parallel
+        let parallel_execute_result = self.execute(transactions)?;
+
+        // Calculate requests
+        let receipts = parallel_execute_result.receipts;
+        let requests = self.calc_requests(receipts.clone())?;
+
+        // Governance reward for full block, ommers...
+        self.post_execution()?;
+
+        // Assemble new block execution result, there is no dump receipt
+        let results = BlockExecutionResult {
+            receipts,
+            requests,
+            gas_used: parallel_execute_result.gas_used,
+        };
+
+        Ok(results) */
+    }
+
+    pub fn execute(
+        &mut self,
+        _transactions: impl IntoIterator<Item = impl ExecutableTx<Self>>,
+    ) -> Result<BlockExecutionResult<OpReceipt>, BlockExecutionError> {
+        // Set state clear flag if the block is after the Spurious Dragon hardfork.
+        let state_clear_flag = self
+            .spec
+            .is_spurious_dragon_active_at_block(self.evm().block().number);
+        let db = self.evm_mut().db_mut();
+        db.set_state_clear_flag(state_clear_flag);
+        // let mut parallel_executor = metis_pe::ParallelExecutor::default();
         todo!()
     }
 }
