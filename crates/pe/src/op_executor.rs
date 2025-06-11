@@ -1,11 +1,11 @@
 use crate::{
-    Entry, ExecutionError, Location, LocationValue, Task, TxExecutionResult, TxVersion,
+    Entry, ExecutionError, Location, LocationValue, Task, TxVersion,
     dropper::AsyncDropper,
     mv_memory::{MvMemory, build_mv_memory},
-    result::VmExecutionError,
-    result::{AbortReason, ParallelExecutorError, ParallelExecutorResult, VmExecutionResult},
+    op_vm::OpVm,
+    result::{ParallelExecutorError, TxExecutionResult, VmExecutionError, VmExecutionResult},
     scheduler::{NormalProvider, Scheduler, TaskProvider},
-    vm::{Vm, build_evm},
+    vm::build_evm,
 };
 #[cfg(feature = "compiler")]
 use std::sync::Arc;
@@ -16,7 +16,7 @@ use std::{
     thread,
 };
 
-use crate::result::evm_err_to_exec_error;
+use crate::result::{AbortReason, ParallelExecutorResult, evm_err_to_exec_error};
 use alloy_evm::EvmEnv;
 #[cfg(feature = "compiler")]
 use metis_primitives::ExecuteEvm;
@@ -26,11 +26,12 @@ use metis_primitives::{
 };
 #[cfg(feature = "compiler")]
 use metis_vm::ExtCompileWorker;
+use crate::mv_memory::build_op_mv_memory;
 
 /// The main executor struct that executes blocks with Block-STM algorithm.
 #[derive(Debug)]
 #[cfg_attr(not(feature = "compiler"), derive(Default))]
-pub struct ParallelExecutor {
+pub struct OpParallelExecutor {
     execution_results: Vec<Mutex<Option<TxExecutionResult>>>,
     abort_reason: OnceLock<AbortReason>,
     #[cfg(feature = "async-dropper")]
@@ -41,7 +42,7 @@ pub struct ParallelExecutor {
 }
 
 #[cfg(feature = "compiler")]
-impl Default for ParallelExecutor {
+impl Default for OpParallelExecutor {
     fn default() -> Self {
         Self {
             execution_results: Default::default(),
@@ -53,7 +54,7 @@ impl Default for ParallelExecutor {
     }
 }
 
-impl ParallelExecutor {
+impl OpParallelExecutor {
     /// New a parallel VM with the compiler feature. The default compiler is an AOT-based one.
     #[cfg(feature = "compiler")]
     pub fn compiler() -> Self {
@@ -64,7 +65,7 @@ impl ParallelExecutor {
     }
 }
 
-impl ParallelExecutor {
+impl OpParallelExecutor {
     /// Execute an block with the block env and transactions.
     pub fn execute<DB>(
         &mut self,
@@ -84,8 +85,8 @@ impl ParallelExecutor {
         let task_provider = NormalProvider::new(block_size);
         let scheduler = Scheduler::new(task_provider);
 
-        let mv_memory = build_mv_memory(&evm_env.block_env, &txs);
-        let vm = Vm::new(
+        let mv_memory = build_op_mv_memory(&evm_env.block_env, &txs);
+        let vm = OpVm::new(
             &db,
             &mv_memory,
             &evm_env,
@@ -131,7 +132,7 @@ impl ParallelExecutor {
                 AbortReason::FallbackToSequential => {
                     #[cfg(feature = "async-dropper")]
                     self.dropper.drop((mv_memory, scheduler, Vec::new()));
-                    return execute_sequential(
+                    return op_execute_sequential(
                         db,
                         evm_env,
                         txs,
@@ -282,7 +283,7 @@ impl ParallelExecutor {
 
     fn try_execute<DB: DatabaseRef + Send, T: TaskProvider>(
         &self,
-        vm: &Vm<'_, DB>,
+        vm: &OpVm<'_, DB>,
         scheduler: &Scheduler<T>,
         tx_version: TxVersion,
     ) -> Option<Task> {
@@ -347,7 +348,7 @@ fn try_validate<T: TaskProvider>(
 
 /// Execute transactions sequentially.
 /// Useful for falling back for (small) blocks with many dependencies.
-pub fn execute_sequential<DB: DatabaseRef>(
+pub fn op_execute_sequential<DB: DatabaseRef>(
     db: DB,
     evm_env: EvmEnv,
     txs: Vec<TxEnv>,
