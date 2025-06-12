@@ -1,14 +1,7 @@
-use crate::{
-    AccountMeta, Entry, FinishExecFlags, Location, LocationHash, LocationValue, ReadOrigin,
-    ReadOrigins, ReadSet, TxIdx, TxVersion, WriteSet,
-    mv_memory::MvMemory,
-    mv_memory::{OpRewardPolicy, op_reward_policy},
-    result::{ReadError, TxExecutionResult, VmExecutionError, VmExecutionResult},
-    vm::WithoutRewardBeneficiaryHandler,
-};
+use crate::{AccountMeta, Entry, FinishExecFlags, Location, LocationHash, LocationValue, ReadOrigin, ReadOrigins, ReadSet, TxIdx, TxVersion, WriteSet, mv_memory::MvMemory, mv_memory::{OpRewardPolicy, op_reward_policy}, result::{ReadError, TxExecutionResult, VmExecutionError, VmExecutionResult}, vm::WithoutRewardBeneficiaryHandler, VmTr};
 use alloy_evm::EvmEnv;
 use alloy_primitives::TxKind;
-use metis_primitives::{BuildIdentityHasher, HashMap, I257, Transaction, hash_deterministic};
+use metis_primitives::{BuildIdentityHasher, HashMap, I257, Transaction, hash_deterministic, MainnetEvm};
 #[cfg(feature = "compiler")]
 use metis_vm::ExtCompileWorker;
 use op_revm::{DefaultOp, OpBuilder, OpContext, OpEvm, OpSpecId, OpTransaction};
@@ -30,6 +23,9 @@ use revm::{
 use smallvec::{SmallVec, smallvec};
 #[cfg(feature = "compiler")]
 use std::sync::Arc;
+use revm::handler::MainnetContext;
+use crate::mv_memory::reward_policy;
+use crate::vm::{build_evm, Vm};
 
 // A database interface that intercepts reads while executing a specific
 // transaction. It provides values from the multi-version data structure
@@ -689,4 +685,33 @@ pub(crate) fn build_op_evm<DB: Database>(db: DB, spec_id: OpSpecId) -> OpEvm<OpC
         cfg.spec = spec_id;
     });
     op_ctx.build_op()
+}
+
+
+impl<'a, DB: DatabaseRef, DB2: Database> VmTr<'a, DB2> for OpVm<'a, DB> {
+    type DB = DB;
+    type Evm = OpEvm<OpContext<DB2>, ()>;
+
+    fn new(db: &'a Self::DB, mv_memory: &'a MvMemory, evm_env: &'a EvmEnv, txs: &'a [TxEnv], #[cfg(feature = "compiler")] worker: Arc<ExtCompileWorker>,) -> Self {
+        OpVm {
+            db,
+            mv_memory,
+            evm_env,
+            txs,
+            beneficiary_location_hash: hash_deterministic(Location::Basic(
+                evm_env.block_env.beneficiary,
+            )),
+            op_reward_policy: op_reward_policy(),
+            #[cfg(feature = "compiler")]
+            worker,
+        }
+    }
+
+    fn execute(&self, tx_version: &TxVersion) -> Result<VmExecutionResult, VmExecutionError> {
+        OpVm::execute(self, tx_version)
+    }
+
+    fn build_evm(db: DB2, _evm_env: EvmEnv) -> Self::Evm {
+        build_op_evm(db, Default::default())
+    }
 }

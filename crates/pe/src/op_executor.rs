@@ -16,6 +16,7 @@ use std::{
     thread,
 };
 
+use crate::mv_memory::build_op_mv_memory;
 use crate::result::{AbortReason, ParallelExecutorResult, evm_err_to_exec_error};
 use alloy_evm::EvmEnv;
 #[cfg(feature = "compiler")]
@@ -26,7 +27,6 @@ use metis_primitives::{
 };
 #[cfg(feature = "compiler")]
 use metis_vm::ExtCompileWorker;
-use crate::mv_memory::build_op_mv_memory;
 
 /// The main executor struct that executes blocks with Block-STM algorithm.
 #[derive(Debug)]

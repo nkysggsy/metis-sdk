@@ -85,6 +85,7 @@ impl ParallelExecutor {
         let scheduler = Scheduler::new(task_provider);
 
         let mv_memory = build_mv_memory(&evm_env.block_env, &txs);
+        // XXX FIXME
         let vm = Vm::new(
             &db,
             &mv_memory,

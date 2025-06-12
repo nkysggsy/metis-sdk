@@ -1,12 +1,7 @@
-use crate::{
-    AccountMeta, Entry, FinishExecFlags, Location, LocationHash, LocationValue, ReadOrigin,
-    ReadOrigins, ReadSet, TxIdx, TxVersion, WriteSet,
-    mv_memory::{MvMemory, RewardPolicy, reward_policy},
-    result::{ReadError, TxExecutionResult, VmExecutionError, VmExecutionResult},
-};
+use crate::{AccountMeta, Entry, FinishExecFlags, Location, LocationHash, LocationValue, ReadOrigin, ReadOrigins, ReadSet, TxIdx, TxVersion, WriteSet, mv_memory, mv_memory::{MvMemory, RewardPolicy, reward_policy}, result::{ReadError, TxExecutionResult, VmExecutionError, VmExecutionResult}, VmTr};
 use alloy_evm::EvmEnv;
 use alloy_primitives::TxKind;
-use metis_primitives::{BuildIdentityHasher, HashMap, I257, hash_deterministic};
+use metis_primitives::{BlockEnv, BuildIdentityHasher, HashMap, I257, hash_deterministic};
 #[cfg(feature = "compiler")]
 use metis_vm::ExtCompileWorker;
 #[cfg(feature = "compiler")]
@@ -763,5 +758,33 @@ impl<EVM> WithoutRewardBeneficiaryHandler<EVM> {
             _phantom: core::marker::PhantomData,
             worker,
         }
+    }
+}
+
+impl<'a, DB: DatabaseRef, DB2: Database> VmTr<'a, DB2> for Vm<'a, DB> {
+    type DB = DB;
+    type Evm = MainnetEvm<MainnetContext<DB2>>;
+
+    fn new(db: &'a Self::DB, mv_memory: &'a MvMemory, evm_env: &'a EvmEnv, txs: &'a [TxEnv], #[cfg(feature = "compiler")] worker: Arc<ExtCompileWorker>,) -> Self {
+        Vm {
+            db,
+            mv_memory,
+            evm_env,
+            txs,
+            beneficiary_location_hash: hash_deterministic(Location::Basic(
+                evm_env.block_env.beneficiary,
+            )),
+            reward_policy: reward_policy(),
+            #[cfg(feature = "compiler")]
+            worker,
+        }
+    }
+
+    fn execute(&self, tx_version: &TxVersion) -> Result<VmExecutionResult, VmExecutionError> {
+        Vm::execute(self, tx_version)
+    }
+
+    fn build_evm(db: DB2, evm_env: EvmEnv) -> Self::Evm {
+        build_evm(db, evm_env)
     }
 }
