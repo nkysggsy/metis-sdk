@@ -841,3 +841,43 @@ impl<EVM> WithoutRewardBeneficiaryHandler<EVM> {
         }
     }
 }
+
+
+// Define the VmTr trait
+pub trait VmTr<'a> {
+    type DB: DatabaseRef;
+
+    fn new(
+        db: &'a Self::DB,
+        mv_memory: &'a MvMemory,
+        evm_env: &'a EvmEnv,
+        txs: &'a [TxEnv],
+        #[cfg(feature = "compiler")] worker: Arc<ExtCompileWorker>,
+    ) -> Self;
+}
+
+// Implement VmTr for Vm
+impl<'a, DB: DatabaseRef> VmTr<'a> for Vm<'a, DB> {
+    type DB = DB;
+
+    fn new(
+        db: &'a Self::DB,
+        mv_memory: &'a MvMemory,
+        evm_env: &'a EvmEnv,
+        txs: &'a [TxEnv],
+        #[cfg(feature = "compiler")] worker: Arc<ExtCompileWorker>,
+    ) -> Self {
+        Vm {
+            db,
+            mv_memory,
+            evm_env,
+            txs,
+            beneficiary_location_hash: hash_deterministic(Location::Basic(
+                evm_env.block_env.beneficiary,
+            )),
+            reward_policy: reward_policy(),
+            #[cfg(feature = "compiler")]
+            worker,
+        }
+    }
+}
