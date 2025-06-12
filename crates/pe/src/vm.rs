@@ -1,9 +1,5 @@
 use crate::result::{ReadError, VmExecutionError, VmExecutionResult};
-use crate::{
-    AccountMeta, Entry, FinishExecFlags, Location, LocationHash, LocationValue, ReadOrigin,
-    ReadOrigins, ReadSet, TxExecutionResult, TxIdx, TxVersion, WriteSet,
-    mv_memory::{MvMemory, RewardPolicy, reward_policy},
-};
+use crate::{AccountMeta, Entry, FinishExecFlags, Location, LocationHash, LocationValue, ReadOrigin, ReadOrigins, ReadSet, TxExecutionResult, TxIdx, TxVersion, WriteSet, mv_memory::{MvMemory, RewardPolicy, reward_policy}, mv_memory};
 use alloy_evm::EvmEnv;
 use alloy_primitives::TxKind;
 #[cfg(feature = "optimism")]
@@ -844,8 +840,9 @@ impl<EVM> WithoutRewardBeneficiaryHandler<EVM> {
 
 
 // Define the VmTr trait
-pub trait VmTr<'a> {
+pub trait VmTr<'a, DB2: Database> {
     type DB: DatabaseRef;
+    type Evm;
 
     fn new(
         db: &'a Self::DB,
@@ -854,11 +851,19 @@ pub trait VmTr<'a> {
         txs: &'a [TxEnv],
         #[cfg(feature = "compiler")] worker: Arc<ExtCompileWorker>,
     ) -> Self;
+
+    fn build_evm(db: DB2, evm_env: EvmEnv) -> Self::Evm;
 }
 
 // Implement VmTr for Vm
-impl<'a, DB: DatabaseRef> VmTr<'a> for Vm<'a, DB> {
+impl<'a, DB: DatabaseRef, DB2: Database> VmTr<'a, DB2> for Vm<'a, DB> {
     type DB = DB;
+
+
+    type Evm = MainnetEvm<MainnetContext<DB2>>;
+
+    #[cfg(feature = "optimism")]
+    type Evm = OpEvm<OpContext<DB2>, ()>;
 
     fn new(
         db: &'a Self::DB,
@@ -879,5 +884,12 @@ impl<'a, DB: DatabaseRef> VmTr<'a> for Vm<'a, DB> {
             #[cfg(feature = "compiler")]
             worker,
         }
+    }
+
+    fn build_evm(db: DB2, evm_env: EvmEnv) -> Self::Evm {
+
+            // Instantiate MainnetEvm for non-Optimism case
+            build_evm(db, evm_env)
+
     }
 }
